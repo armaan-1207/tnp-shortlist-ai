@@ -135,13 +135,15 @@ export const SkillCard: React.FC<SkillCardProps> = ({ profile, onUpdateScore }) 
 
   // Timer countdown
   useEffect(() => {
-    let timer: any;
+    let timer: ReturnType<typeof setInterval> | undefined;
     if (isAssessmentRunning && timeRemaining > 0) {
       timer = setInterval(() => {
         setTimeRemaining((prev) => prev - 1);
       }, 1000);
     }
-    return () => clearInterval(timer);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
   }, [isAssessmentRunning, timeRemaining]);
 
   // Deterministic verification hash

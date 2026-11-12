@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   StudentProfile, 
   DEFAULT_STUDENT_PROFILE, 
@@ -6,6 +6,7 @@ import {
   evaluateShortlist,
   PredictionResult 
 } from './lib/predictor';
+import { sanitizeStudentProfile } from './lib/security';
 import { TIET_COMPANIES } from './data/companies';
 import { StudentConfigurator } from './components/StudentConfigurator';
 import { CompanyTable } from './components/CompanyTable';
@@ -86,43 +87,61 @@ export function App() {
     if (!next) sound.click();
   };
 
-  // Compute all company predictions for current student
-  const allPredictions = evaluateAllCompanies(profile);
+  // Memoized company predictions for optimal re-rendering efficiency
+  const allPredictions = useMemo(() => evaluateAllCompanies(profile), [profile]);
 
-  // Current selected company prediction for SHAP
-  const selectedCompany =
-    TIET_COMPANIES.find((c) => c.id === selectedCompanyId) || TIET_COMPANIES[0];
-  const selectedPrediction: PredictionResult = evaluateShortlist(profile, selectedCompany);
+  // Current selected company prediction for SHAP attribution
+  const selectedCompany = useMemo(
+    () => TIET_COMPANIES.find((c) => c.id === selectedCompanyId) || TIET_COMPANIES[0],
+    [selectedCompanyId]
+  );
 
-  // Handlers
-  const handleResetProfile = () => {
+  const selectedPrediction: PredictionResult = useMemo(
+    () => evaluateShortlist(profile, selectedCompany),
+    [profile, selectedCompany]
+  );
+
+  // Sanitized Handlers with zero-trust validation
+  const handleResetProfile = useCallback(() => {
     sound.click();
     setProfile(DEFAULT_STUDENT_PROFILE);
-  };
+  }, []);
 
-  const handleApplySimulated = (simulated: StudentProfile) => {
-    sound.success();
-    setProfile(simulated);
-  };
+  const handleProfileChange = useCallback((updated: Partial<StudentProfile>) => {
+    setProfile((prev) => sanitizeStudentProfile({ ...prev, ...updated }));
+  }, []);
 
-  const handleUpdateOaScore = (oaScore: number, integrity: number) => {
+  const handleApplySimulated = useCallback((simulated: StudentProfile) => {
     sound.success();
-    setProfile((prev) => ({
+    setProfile(sanitizeStudentProfile(simulated));
+  }, []);
+
+  const handleUpdateOaScore = useCallback((oaScore: number, integrity: number) => {
+    sound.success();
+    setProfile((prev) => sanitizeStudentProfile({
       ...prev,
       oaMockScore: oaScore,
       proctorIntegrity: integrity,
     }));
-  };
+  }, []);
 
-  // Top summary stats
-  const eligibleCount = allPredictions.filter((p) => p.isEligible).length;
-  const highChanceCount = allPredictions.filter((p) => p.probability >= 72).length;
-  const avgProbability = Math.round(
-    allPredictions.reduce((acc, p) => acc + p.probability, 0) / allPredictions.length
+  // Memoized top summary KPIs
+  const eligibleCount = useMemo(() => allPredictions.filter((p) => p.isEligible).length, [allPredictions]);
+  const highChanceCount = useMemo(() => allPredictions.filter((p) => p.probability >= 72).length, [allPredictions]);
+  const avgProbability = useMemo(
+    () => Math.round(allPredictions.reduce((acc, p) => acc + p.probability, 0) / (allPredictions.length || 1)),
+    [allPredictions]
   );
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#090d16] text-slate-900 dark:text-slate-100 flex flex-col font-sans dot-grid antialiased transition-colors duration-200">
+      {/* Skip to Main Content Link for WCAG Screen Readers */}
+      <a 
+        href="#main-content" 
+        className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-indigo-600 focus:text-white focus:rounded-lg focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-white"
+      >
+        Skip to main content
+      </a>
       
       {/* ================= FROSTED HEADER ================= */}
       <header className="sticky top-0 z-40 bg-white/85 dark:bg-[#0d1322]/85 backdrop-blur-xl border-b border-slate-200/80 dark:border-slate-800/80 shadow-sm transition-colors duration-200">
@@ -219,22 +238,24 @@ export function App() {
           </div>
         </div>
 
-        {/* Tab Navigation Pill Bar */}
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center gap-2 pb-2">
-          <div className="inline-flex p-1 bg-slate-100 dark:bg-slate-800/70 rounded-xl border border-slate-200/60 dark:border-slate-700/60 text-xs font-medium">
+        {/* Tab Navigation Pill Bar - Responsive Mobile Scroller */}
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 flex items-center gap-2 pb-2 overflow-x-auto no-scrollbar">
+          <div className="inline-flex p-1 bg-slate-100 dark:bg-slate-800/70 rounded-xl border border-slate-200/60 dark:border-slate-700/60 text-xs font-medium w-full sm:w-auto justify-between sm:justify-start">
             <button
               onClick={() => {
                 sound.click();
                 setActiveTab('SCREENER');
               }}
-              className={`px-3.5 py-1.5 rounded-lg flex items-center gap-2 transition-all ${
+              aria-label="Shortlist Screener and SHAP Attribution Tab"
+              className={`px-3 py-1.5 rounded-lg flex items-center justify-center gap-1.5 sm:gap-2 transition-all flex-1 sm:flex-initial text-center ${
                 activeTab === 'SCREENER'
                   ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm font-semibold'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
-              <BarChart3 className="w-4 h-4" />
-              <span>Shortlist Screener & SHAP</span>
+              <BarChart3 className="w-4 h-4 flex-shrink-0" />
+              <span className="hidden sm:inline">Shortlist Screener & SHAP</span>
+              <span className="sm:hidden">Screener</span>
             </button>
 
             <button
@@ -242,14 +263,16 @@ export function App() {
                 sound.click();
                 setActiveTab('WHAT_IF');
               }}
-              className={`px-3.5 py-1.5 rounded-lg flex items-center gap-2 transition-all ${
+              aria-label="What-If Simulator Workbench Tab"
+              className={`px-3 py-1.5 rounded-lg flex items-center justify-center gap-1.5 sm:gap-2 transition-all flex-1 sm:flex-initial text-center ${
                 activeTab === 'WHAT_IF'
                   ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm font-semibold'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
-              <SlidersHorizontal className="w-4 h-4" />
-              <span>What-If Simulator Workbench</span>
+              <SlidersHorizontal className="w-4 h-4 flex-shrink-0" />
+              <span className="hidden sm:inline">What-If Simulator</span>
+              <span className="sm:hidden">What-If</span>
             </button>
 
             <button
@@ -257,21 +280,23 @@ export function App() {
                 sound.click();
                 setActiveTab('SKILL_BADGE');
               }}
-              className={`px-3.5 py-1.5 rounded-lg flex items-center gap-2 transition-all ${
+              aria-label="Mock OA and Verified Skill Badge Tab"
+              className={`px-3 py-1.5 rounded-lg flex items-center justify-center gap-1.5 sm:gap-2 transition-all flex-1 sm:flex-initial text-center ${
                 activeTab === 'SKILL_BADGE'
                   ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm font-semibold'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
               }`}
             >
-              <ShieldCheck className="w-4 h-4 text-emerald-500" />
-              <span>Mock OA & Verified Skill Badge</span>
+              <ShieldCheck className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+              <span className="hidden sm:inline">Mock OA & Skill Badge</span>
+              <span className="sm:hidden">Skill Pass</span>
             </button>
           </div>
         </div>
       </header>
 
       {/* ================= MAIN CONTENT ================= */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+      <main id="main-content" tabIndex={-1} role="main" aria-label="Placement Analytics Workspace" className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 space-y-5 sm:space-y-6 focus:outline-none">
         
         {/* Top Bento Stats Strip */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
@@ -348,7 +373,7 @@ export function App() {
         {/* Student Profile Configurator Panel */}
         <StudentConfigurator
           profile={profile}
-          onChange={setProfile}
+          onChange={handleProfileChange}
           onReset={handleResetProfile}
         />
 
